@@ -19,10 +19,15 @@ from math import log, ceil
 
 from pysmt.exceptions import SolverAPINotFound
 
+BTOR3 = False
 try:
-    import boolector
+    import pyboolector as boolector
+    BTOR3 = True
 except ImportError:
-    raise SolverAPINotFound
+    try:
+        import boolector
+    except ImportError:
+        raise SolverAPINotFound
 
 
 from pysmt.solvers.solver import (IncrementalTrackingSolver,
@@ -165,8 +170,16 @@ class BoolectorSolver(IncrementalTrackingSolver,
         self.btor = boolector.Boolector()
         self.options(self)
         self.converter = BTORConverter(environment, self.btor)
+        self.environment = environment
         self.mgr = environment.formula_manager
         self.declarations = {}
+
+        if BTOR3:
+            # Boolector now supports push/pop
+            # replace functions if using recent version
+            self._push = lambda levels=1: self.btor.Push(levels)
+            self._pop = lambda levels=1: self.btor.Pop(levels)
+
         return
 
 # EOC BoolectorOptions
@@ -175,7 +188,11 @@ class BoolectorSolver(IncrementalTrackingSolver,
 
     @clear_pending_pop
     def _reset_assertions(self):
-        raise NotImplementedError
+        self.btor = boolector.Boolector()
+        self.options(self)
+        self.converter = BTORConverter(self.environment, self.btor)
+        self.declarations = {}
+
 
     @clear_pending_pop
     def declare_variable(self, var):
@@ -212,10 +229,11 @@ class BoolectorSolver(IncrementalTrackingSolver,
 
     @clear_pending_pop
     def _push(self, levels=1):
-        # Boolector does not support push/pop.
+        # Boolector <3.0 does not support push/pop.
         # Incrementality could be simulated by keeping a stack
         # of boolector instances.
         # See self.btor.Clone()
+        # If Boolector >=3.0 is available, this method is replaced
         raise NotImplementedError
 
     @clear_pending_pop

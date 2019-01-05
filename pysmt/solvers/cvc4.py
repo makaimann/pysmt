@@ -27,7 +27,7 @@ except ImportError:
     raise SolverAPINotFound
 
 import pysmt.typing as types
-from pysmt.logics import PYSMT_LOGICS, ARRAYS_CONST_LOGICS
+from pysmt.logics import PYSMT_LOGICS
 
 from pysmt.solvers.solver import Solver, Converter, SolverOptions
 from pysmt.exceptions import (SolverReturnedUnknownResultError,
@@ -79,7 +79,6 @@ class CVC4Options(SolverOptions):
 class CVC4Solver(Solver, SmtLibBasicSolver, SmtLibIgnoreMixin):
 
     LOGICS = PYSMT_LOGICS -\
-             ARRAYS_CONST_LOGICS -\
              set(l for l in PYSMT_LOGICS if not l.theory.linear)
 
     OptionsClass = CVC4Options
@@ -113,7 +112,9 @@ class CVC4Solver(Solver, SmtLibBasicSolver, SmtLibIgnoreMixin):
         self.cvc4 = CVC4.SmtEngine(self.em); self.cvc4.thisown=1
         self.options(self)
         self.declarations = set()
-        self.cvc4.setLogic(self.logic_name)
+        # remove extra characters from logic_name
+        logic = self.logic_name.replace("*", "")
+        self.cvc4.setLogic(logic)
 
     def declare_variable(self, var):
         raise NotImplementedError

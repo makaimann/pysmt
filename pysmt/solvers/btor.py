@@ -282,6 +282,15 @@ class BTORConverter(Converter, DagWalker):
         self.function_declarations = {}
         return
 
+    def match_widths(self, v1, v2):
+        if v1.width != v2.width:
+            if v1.width > v2.width:
+                return v1, self._btor.Concat(self._btor.Const(0, v1.width - v2.width), v2)
+            else:
+                return self._btor.Concat(self._btor.Const(0, v2.width - v1.width), v1), v2
+        else:
+            return v1, v2
+
     @catch_conversion_error
     def convert(self, formula):
         return self.walk(formula)
@@ -348,7 +357,9 @@ class BTORConverter(Converter, DagWalker):
         return self._btor.Implies(*args)
 
     def walk_ite(self, formula, args, **kwargs):
-        return self._btor.Cond(*args)
+        cond, v1, v2 = args
+        v1, v2 = self.match_widths(v1, v2)
+        return self._btor.Cond(cond, v1, v2)
 
     def walk_bool_constant(self, formula, **kwargs):
         return self._btor.Const(formula.constant_value())
@@ -411,6 +422,16 @@ class BTORConverter(Converter, DagWalker):
         return self._btor.Urem(args[0], args[1])
 
     def walk_bv_lshl(self, formula, args, **kwargs):
+        # handle 1-bit case
+        if args[0].width == 1:
+            assert args[1].width == 1
+            zero = self._btor.Const(0, 1)
+            one = self._btor.Const(1, 1)
+            cond = self._btor.Eq(args[1], one)
+            return self._btor.Cond(cond,
+                                   zero,
+                                   args[0])
+
         # LHS width must be a power of 2
         # Since this is a Logical Shift, we can Zero-Extend LHS
         # if this is not the case
@@ -433,6 +454,16 @@ class BTORConverter(Converter, DagWalker):
                                    self._btor.Sll(lhs, rescaled))
 
     def walk_bv_lshr(self, formula, args, **kwargs):
+        # handle 1-bit case
+        if args[0].width == 1:
+            assert args[1].width == 1
+            zero = self._btor.Const(0, 1)
+            one = self._btor.Const(1, 1)
+            cond = self._btor.Eq(args[1], one)
+            return self._btor.Cond(cond,
+                                   zero,
+                                   args[0])
+
         # LHS width must be a power of 2
         # Since this is a Logical Shift, we can Zero-Extend LHS
         # if this is not the case
@@ -484,6 +515,12 @@ class BTORConverter(Converter, DagWalker):
         return self._btor.Srem(args[0], args[1])
 
     def walk_bv_ashr (self, formula, args, **kwargs):
+        # handle size 1 args
+        if args[0].width == 1:
+            assert args[1].width == 1
+            # arithmetic right shift of 1-bit is just the same bit
+            return args[0]
+
         # LHS width must be a power of 2
         # Since this is an Arithmetic Shift, we need to Sign-Extend LHS
         # if this is not the case

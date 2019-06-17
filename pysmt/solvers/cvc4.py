@@ -258,14 +258,11 @@ class CVC4Converter(Converter, DagWalker):
             CVC4.SELECT: self._back_adapter(self.mgr.Select),
             CVC4.STORE: self._back_adapter(self.mgr.Store),
             # Slightly more complex conversion
-            # CVC4.BITVECTOR_EXTRACT: self._back_bv_extract,
-            # CVC4.BITVECTOR_ZERO_EXTEND: self._back_bv_zext,
-            # CVC4.BITVECTOR_SIGN_EXTEND: self._back_bv_sext,
-            # CVC4.BITVECTOR_ROTATE_LEFT: self._back_bv_rol,
-            # CVC4.BITVECTOR_ROTATE_RIGHT: self._back_bv_ror,
-            # Symbols, Constants and UFs have TAG_UNKNOWN
-            # TODO: Figure out CVC4 equivalent -- VARIABLE?
-            # mathsat.MSAT_TAG_UNKNOWN: self._back_tag_unknown,
+            CVC4.BITVECTOR_EXTRACT: self._back_bv_extract,
+            CVC4.BITVECTOR_ZERO_EXTEND: self._back_bv_zext,
+            CVC4.BITVECTOR_SIGN_EXTEND: self._back_bv_sext,
+            CVC4.BITVECTOR_ROTATE_LEFT: self._back_bv_rol,
+            CVC4.BITVECTOR_ROTATE_RIGHT: self._back_bv_ror
         }
 
         return
@@ -322,6 +319,39 @@ class CVC4Converter(Converter, DagWalker):
             raise PysmtTypeError("Unsupported expression:", expr.toString())
 
         return res
+
+    def _back_bv_extract(self, term, args):
+        '''
+        Converts a CVC4 bit-vector extract back to a PySMT object.
+        '''
+        op = term.getOperator()
+        assert op.getKind() == CVC4.BITVECTOR_EXTRACT_OP
+        ext = op.getConstBitVectorExtract()
+        return self.mgr.BVExtract(args[0], ext.low, ext.high)
+
+    def _back_bv_zext(self, term, args):
+        op = term.getOperator()
+        assert op.getKind() == CVC4.BITVECTOR_ZERO_EXTEND_OP
+        zext = op.getConstBitVectorZeroExtend()
+        return self.mgr.BVZExt(args[0], zext.zeroExtendAmount)
+
+    def _back_bv_sext(self, term, args):
+        op = term.getOperator()
+        assert op.getKind() == CVC4.BITVECTOR_SIGN_EXTEND_OP
+        sext = op.getConstBitVectorSignExtend()
+        return self.mgr.BVSExt(args[0], sext.signExtendAmount)
+
+    def _back_bv_rol(self, term, args):
+        op = term.getOperator()
+        assert op.getKind() == CVC4.BITVECTOR_ROTATE_LEFT_OP
+        rol = op.getConstBitVectorRotateLeft()
+        return self.mgr.BVRol(args[0], rol.rotateLeftAmount)
+
+    def _back_bv_ror(self, term, args):
+        op = term.getOperator()
+        assert op.getKind() == CVC4.BITVECTOR_ROTATE_RIGHT_OP
+        rol = op.getConstBitVectorRotateRight()
+        return self.mgr.BVRor(args[0], rol.rotateRightAmount)
 
     def _back_single_term(self, term, mgr, args):
         """Builds the pysmt formula given a term and the list of formulae

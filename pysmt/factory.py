@@ -315,6 +315,11 @@ class Factory(object):
         except SolverAPINotFound:
             pass
 
+        try:
+            from pysmt.solvers.cvc4 import CVC4Interpolator
+            self._all_interpolators['cvc4'] = CVC4Interpolator
+        except SolverAPINotFound:
+            pass
 
     def set_solver_preference_list(self, preference_list):
         """Defines the order in which to pick the solvers.

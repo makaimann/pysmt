@@ -27,7 +27,7 @@ except ImportError:
     raise SolverAPINotFound
 
 import pysmt.typing as types
-from pysmt.logics import PYSMT_LOGICS, ARRAYS_CONST_LOGICS
+from pysmt.logics import PYSMT_LOGICS, ARRAYS_CONST_LOGICS, QF_LIA, QF_LRA, QF_BV
 
 from pysmt.solvers.solver import Solver, Converter, SolverOptions
 from pysmt.exceptions import (SolverReturnedUnknownResultError,
@@ -39,6 +39,7 @@ from pysmt.solvers.smtlib import SmtLibBasicSolver, SmtLibIgnoreMixin
 from pysmt.solvers.eager import EagerModel
 from pysmt.decorators import catch_conversion_error
 from pysmt.constants import Fraction, is_pysmt_integer, to_python_integer
+from pysmt.solvers.interpolation import Interpolator
 
 
 class CVC4Options(SolverOptions):
@@ -201,7 +202,6 @@ class CVC4Solver(Solver, SmtLibBasicSolver, SmtLibIgnoreMixin):
         self.cvc4.setOption(name, CVC4.SExpr(value))
 
 
-
 class CVC4Converter(Converter, DagWalker):
 
     def __init__(self, environment, cvc4_exprMgr):
@@ -217,21 +217,79 @@ class CVC4Converter(Converter, DagWalker):
         self.stringType = cvc4_exprMgr.stringType()
 
         self.declared_vars = {}
+        self.rev_declared_vars = {}
         self.backconversion = {}
         self.mgr = environment.formula_manager
         self._get_type = environment.stc.get_type
+
+        # Back Conversion
+        self.back_memoization = {}
+        self.back_fun = {
+            CVC4.AND: self._back_adapter(self.mgr.And),
+            CVC4.OR:  self._back_adapter(self.mgr.Or),
+            CVC4.NOT: self._back_adapter(self.mgr.Not),
+            CVC4.IMPLIES: self._back_adapter(self.mgr.Implies),
+            CVC4.ITE: self._back_adapter(self.mgr.Ite),
+            CVC4.EQUAL:  self._back_adapter(self.mgr.Equals),
+            CVC4.LEQ: self._back_adapter(self.mgr.LE),
+            CVC4.PLUS: self._back_adapter(self.mgr.Plus),
+            CVC4.MULT: self._back_adapter(self.mgr.Times),
+            CVC4.BITVECTOR_MULT: self._back_adapter(self.mgr.BVMul),
+            CVC4.BITVECTOR_PLUS: self._back_adapter(self.mgr.BVAdd),
+            CVC4.BITVECTOR_UDIV: self._back_adapter(self.mgr.BVUDiv),
+            CVC4.BITVECTOR_UREM: self._back_adapter(self.mgr.BVURem),
+            CVC4.BITVECTOR_CONCAT: self._back_adapter(self.mgr.BVConcat),
+            CVC4.BITVECTOR_OR: self._back_adapter(self.mgr.BVOr),
+            CVC4.BITVECTOR_XOR:self._back_adapter(self.mgr.BVXor),
+            CVC4.BITVECTOR_AND:self._back_adapter(self.mgr.BVAnd),
+            CVC4.BITVECTOR_NOT:self._back_adapter(self.mgr.BVNot),
+            CVC4.BITVECTOR_SUB:self._back_adapter(self.mgr.BVSub),
+            CVC4.BITVECTOR_NEG:self._back_adapter(self.mgr.BVNeg),
+            CVC4.BITVECTOR_SREM:self._back_adapter(self.mgr.BVSRem),
+            CVC4.BITVECTOR_SDIV:self._back_adapter(self.mgr.BVSDiv),
+            CVC4.BITVECTOR_ULT: self._back_adapter(self.mgr.BVULT),
+            CVC4.BITVECTOR_SLT: self._back_adapter(self.mgr.BVSLT),
+            CVC4.BITVECTOR_ULE: self._back_adapter(self.mgr.BVULE),
+            CVC4.BITVECTOR_SLE: self._back_adapter(self.mgr.BVSLE),
+            CVC4.BITVECTOR_SHL: self._back_adapter(self.mgr.BVLShl),
+            CVC4.BITVECTOR_LSHR: self._back_adapter(self.mgr.BVLShr),
+            CVC4.BITVECTOR_ASHR: self._back_adapter(self.mgr.BVAShr),
+            CVC4.BITVECTOR_COMP: self._back_adapter(self.mgr.BVComp),
+            CVC4.SELECT: self._back_adapter(self.mgr.Select),
+            CVC4.STORE: self._back_adapter(self.mgr.Store),
+            # Slightly more complex conversion
+            # CVC4.BITVECTOR_EXTRACT: self._back_bv_extract,
+            # CVC4.BITVECTOR_ZERO_EXTEND: self._back_bv_zext,
+            # CVC4.BITVECTOR_SIGN_EXTEND: self._back_bv_sext,
+            # CVC4.BITVECTOR_ROTATE_LEFT: self._back_bv_rol,
+            # CVC4.BITVECTOR_ROTATE_RIGHT: self._back_bv_ror,
+            # Symbols, Constants and UFs have TAG_UNKNOWN
+            # TODO: Figure out CVC4 equivalent -- VARIABLE?
+            # mathsat.MSAT_TAG_UNKNOWN: self._back_tag_unknown,
+        }
+
         return
 
     def declare_variable(self, var):
         if not var.is_symbol():
             raise PysmtTypeError("Trying to declare as a variable something "
                                  "that is not a symbol: %s" % var)
-        if var.symbol_name() not in self.declared_vars:
+        if var not in self.declared_vars:
             cvc4_type = self._type_to_cvc4(var.symbol_type())
             decl = self.mkVar(var.symbol_name(), cvc4_type)
             self.declared_vars[var] = decl
+            self.rev_declared_vars[decl.toString()] = var
 
-    def back(self, expr):
+    def _back_adapter(self, op):
+        """Create a function that for the given op.
+
+        This is used in the construction of back_fun, to simplify the code.
+        """
+        def back_apply(term, args):
+            return op(*args)
+        return back_apply
+
+    def _back_constant(self, expr):
         res = None
         if expr.isConst():
             if expr.getType().isBoolean():
@@ -264,6 +322,65 @@ class CVC4Converter(Converter, DagWalker):
             raise PysmtTypeError("Unsupported expression:", expr.toString())
 
         return res
+
+    def _back_single_term(self, term, mgr, args):
+        """Builds the pysmt formula given a term and the list of formulae
+        obtained by converting the term children.
+
+        :param term: The CVC4 term to be transformed in pysmt formulae
+        :type term: CVC4 term
+
+        :param mgr: The formula manager to be sued to build the
+        formulae, it should allow for type unsafety.
+        :type mgr: Formula manager
+
+        :param args: List of the pysmt formulae obtained by converting
+        all the args (obtained by mathsat.msat_term_get_arg()) to
+        pysmt formulae
+        :type args: List of pysmt formulae
+
+        :returns The pysmt formula representing the given term
+        :rtype Pysmt formula
+        """
+
+        if not args:
+            if term.isVariable():
+                name = term.toString()
+                assert name in self.rev_declared_vars, 'should be a declared symbol'
+                return self.rev_declared_vars[name]
+            else:
+                assert term.isConst(), 'should be constant if not variable'
+                return self._back_constant(term)
+        else:
+            try:
+                return self.back_fun[term.getKind()](term, args)
+            except KeyError:
+                raise ConvertExpressionError("Unsupported expression:",
+                                             term.toString())
+
+    def _walk_back(self, term, mgr):
+        stack = [term]
+
+        while len(stack) > 0:
+            current = stack.pop()
+            current_id = current.getId()
+            if current_id not in self.back_memoization:
+                self.back_memoization[current_id] = None
+                stack.append(current)
+                children = current.getChildren()
+                for c in current.getChildren():
+                    stack.append(c)
+            elif self.back_memoization[current_id] is None:
+                converted_args=[self.back_memoization[c.getId()] for c in current.getChildren()]
+                res = self._back_single_term(current, mgr, converted_args)
+                self.back_memoization[current_id] = res
+            else:
+                # we already visited the node, nothing else to do
+                pass
+        return self.back_memoization[term.getId()]
+
+    def back(self, expr):
+        return self._walk_back(expr, self.mgr)
 
     @catch_conversion_error
     def convert(self, formula):
@@ -627,3 +744,43 @@ class CVC4Converter(Converter, DagWalker):
         old_var_list = [self.walk_symbol(x, []) for x in variables]
         new_formula = formula.substitute(old_var_list, new_var_list)
         return (new_formula, new_var_list)
+
+class CVC4Interpolator(Interpolator):
+
+    LOGICS = [QF_LIA, QF_LRA, QF_BV]
+
+    def __init__(self, environment, logic=None):
+        Interpolator.__init__(self)
+        self.em = CVC4.ExprManager()
+        self.cvc4 = CVC4.SmtEngine(self.em); self.cvc4.thisown=1
+        self.converter = CVC4Converter(environment, cvc4_exprMgr=self.em)
+        self.logic = logic
+        self.cvc4.setLogic(str(self.logic))
+        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('true'))
+        self.cvc4.setOption("incremental", CVC4.SExpr("false"));
+        self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
+
+    def _exit(self):
+        del self.cvc4
+        del self.em
+
+    def _check_logic(self, formulas):
+        for f in formulas:
+            logic = get_logic(f, self.environment)
+            ok = any(logic <= l for l in self.LOGICS)
+            if not ok:
+                raise PysmtValueError("Logic not supported by CVC4 "
+                                      "interpolation. (detected logic is: %s)" \
+                                      % str(logic))
+
+    def binary_interpolant(self, a, b):
+        self.cvc4.assertFormula(self.converter.convert(a))
+        res = self.cvc4.checkSat([self.converter.convert(b)])
+        res = res.isSat()
+        if res:
+            raise PysmtValueError("Can't get interpolant for satisfiable query")
+        I = self.cvc4.getInterpolant()
+        return self.converter.back(self.cvc4.getInterpolant())
+
+    def sequence_interpolant(self, formulas):
+        raise NotImplementedError("sequence interpolants not supported by CVC4 interpolator yet")

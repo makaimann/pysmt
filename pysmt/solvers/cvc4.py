@@ -784,8 +784,18 @@ class CVC4Interpolator(Interpolator):
         self.em = CVC4.ExprManager()
         self.cvc4 = CVC4.SmtEngine(self.em); self.cvc4.thisown=1
         self.converter = CVC4Converter(environment, cvc4_exprMgr=self.em)
-        self.logic = logic
-        self.cvc4.setLogic(str(self.logic))
+        self.logic_name = str(logic)
+        self.cvc4.setLogic(self.logic_name)
+        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('true'))
+        self.cvc4.setOption("incremental", CVC4.SExpr("false"));
+        self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
+
+    def reset_assertions(self):
+        del self.cvc4
+        # CVC4's SWIG interface is not acquiring ownership of the
+        # SmtEngine object. Forcing it here.
+        self.cvc4 = CVC4.SmtEngine(self.em); self.cvc4.thisown=1
+        self.cvc4.setLogic(self.logic_name)
         self.cvc4.setOption('sygus-interpol', CVC4.SExpr('true'))
         self.cvc4.setOption("incremental", CVC4.SExpr("false"));
         self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
@@ -804,6 +814,7 @@ class CVC4Interpolator(Interpolator):
                                       % str(logic))
 
     def binary_interpolant(self, a, b):
+        self.reset_assertions()
         self.cvc4.assertFormula(self.converter.convert(a))
         res = self.cvc4.checkSat([self.converter.convert(b)])
         res = res.isSat()

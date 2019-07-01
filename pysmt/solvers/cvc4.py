@@ -786,7 +786,7 @@ class CVC4Interpolator(Interpolator):
         self.converter = CVC4Converter(environment, cvc4_exprMgr=self.em)
         self.logic_name = str(logic)
         self.cvc4.setLogic(self.logic_name)
-        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('true'))
+        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('conclusion'))
         self.cvc4.setOption("incremental", CVC4.SExpr("false"));
         self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
 
@@ -796,7 +796,7 @@ class CVC4Interpolator(Interpolator):
         # SmtEngine object. Forcing it here.
         self.cvc4 = CVC4.SmtEngine(self.em); self.cvc4.thisown=1
         self.cvc4.setLogic(self.logic_name)
-        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('true'))
+        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('conclusion'))
         self.cvc4.setOption("incremental", CVC4.SExpr("false"));
         self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
 
@@ -817,9 +817,10 @@ class CVC4Interpolator(Interpolator):
         self.reset_assertions()
         self.cvc4.assertFormula(self.converter.convert(a))
         res = self.cvc4.checkSat([self.converter.convert(b)])
-        res = res.isSat()
-        if res:
-            raise PysmtValueError("Can't get interpolant for satisfiable query")
+
+        if res.isSat():
+            return None
+
         I = self.cvc4.getInterpolant()
         return self.converter.back(self.cvc4.getInterpolant())
 

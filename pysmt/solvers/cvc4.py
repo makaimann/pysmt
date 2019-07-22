@@ -786,7 +786,7 @@ class CVC4Interpolator(Interpolator):
         self.converter = CVC4Converter(environment, cvc4_exprMgr=self.em)
         self.logic_name = str(logic)
         self.cvc4.setLogic(self.logic_name)
-        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('conclusion'))
+        self.cvc4.setOption('sygus-interpol', CVC4.SExpr('shared'))
         self.cvc4.setOption("incremental", CVC4.SExpr("false"));
         self.cvc4.setOption("check-synth-sol", CVC4.SExpr("true"));
 
